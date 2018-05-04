@@ -12,28 +12,26 @@ from matplotlib import pyplot as plt
 import matplotlib
 from sklearn import metrics
 
-class ImageCNN(object):
+class CNN(object):
 
-  def __init__(self):
+  def __init__(self,days_past):
     """Model function for CNN."""
-    self.img_features = tf.placeholder(dtype=tf.float32, name = "img_features")
+    self.input_features = tf.placeholder(dtype=tf.float32, name = "input_features")
     self.data_labels = tf.placeholder(dtype=tf.int64, name = "data_labels")
     self.onehot_labels = tf.one_hot(self.data_labels, depth=2, on_value=1, off_value=0)
     self.training = tf.placeholder(dtype=tf.bool, name = "training")
     self.learning_rate = tf.placeholder(dtype=tf.float32,name="learning_rate")
-    #self.direct_inputs = tf.placeholder(dtype=tf.float32, name = "direct_inputs")
 
     # Input Layer
     # Reshape X to 4-D tensor: [batch_size, width, height, channels]
-    # Images are 28x28 pixels, and have one color channel
-    self.days_lookback = 32
-    self.input_layer = tf.reshape(self.img_features, [-1, 8, 8, 1],name="input_layer")
+    self.days_lookback = days_past
+    self.input_layer = tf.reshape(self.input_features, [-1, 8, 8, 1],name="input_layer")
 
     # Convolutional Layer #1
     # Computes 32 features using a 5x5 filter with ReLU activation.
     # Padding is added to preserve width and height.
-    # Input Tensor Shape: [batch_size, 32, 8, 1]
-    # Output Tensor Shape: [batch_size, 32, 8, 100]
+    # Input Tensor Shape: [batch_size, days_lookback, 8, 1]
+    # Output Tensor Shape: [batch_size, days_lookback, 8, 100]
     self.conv1 = tf.layers.conv2d(
         inputs=self.input_layer,
         filters=100,#64,
@@ -44,15 +42,15 @@ class ImageCNN(object):
 
     # Pooling Layer #1
     # First max pooling layer with a 2x2 filter and stride of 2
-    # Input Tensor Shape: [batch_size, 32, 8, 100]
-    # Output Tensor Shape: [batch_size,16, 4, 100]
+    # Input Tensor Shape: [batch_size, days_lookback, 8, 100]
+    # Output Tensor Shape: [batch_size,days_lookback/2, 4, 100]
     self.pool1 = tf.layers.max_pooling2d(inputs=self.conv1, pool_size=[2, 2], strides=2,name="pool1")
 
     # Convolutional Layer #2
     # Computes 64 features using a 5x5 filter.
     # Padding is added to preserve width and height.
-    # Input Tensor Shape: [batch_size, 16, 4, 100]
-    # Output Tensor Shape: [batch_size, 16, 4, 100]
+    # Input Tensor Shape: [batch_size, days_lookback/2, 4, 100]
+    # Output Tensor Shape: [batch_size, days_lookback/2, 4, 100]
     self.conv2 = tf.layers.conv2d(
         inputs=self.pool1,
         filters=100,
@@ -63,13 +61,13 @@ class ImageCNN(object):
 
     # Pooling Layer #2
     # Second max pooling layer with a 2x2 filter and stride of 2
-    # Input Tensor Shape: [batch_size, 16, 4, 100]
-    # Output Tensor Shape: [batch_size, 8, 2, 100]
+    # Input Tensor Shape: [batch_size, days_lookback/2, 4, 100]
+    # Output Tensor Shape: [batch_size, days_lookback/4, 2, 100]
     self.pool2 = tf.layers.max_pooling2d(inputs=self.conv2, pool_size=[2, 2], strides=2,name="pool2")
 
     # Flatten tensor into a batch of vectors
-    # Input Tensor Shape: [batch_size, 8, 2, 100]
-    # Output Tensor Shape: [batch_size, 8 * 2 * 100]
+    # Input Tensor Shape: [batch_size, days_lookback/4, 2, 100]
+    # Output Tensor Shape: [batch_size, days_lookback/4 * 2 * 100]
     self.pool2_flat = tf.reshape(self.pool2, [-1, int(self.days_lookback/4) * 2 * 100], name="cnn_features")
 
     # Combine CNN features with other input features.
@@ -110,11 +108,12 @@ def chunks(l, n):
     for i in range(0, len(l), n):
         yield l[i:i + n]
 
-def cnn_traintest(data_tuple,specs={"num_epochs":5},verbose=False):
+def cnn_traintest(data_tuple,specs={"num_epochs":5,"days_past":8},verbose=False):
   SAVE_ON = ("save_dir" in specs)
   LOAD_ON = ("load_dir" in specs) and ("modelmeta_filepath" in specs)
 
   ######################## Load model and initialize saver
+  days_past = specs["days_past"]
   if LOAD_ON:
     modelmeta_filepath = specs["modelmeta_filepath"]
     modelcheckpoint_dir = specs["load_dir"]
@@ -122,7 +121,7 @@ def cnn_traintest(data_tuple,specs={"num_epochs":5},verbose=False):
     saver = tf.train.import_meta_graph(modelmeta_filepath)
     saver.restore(sess,tf.train.latest_checkpoint(modelcheckpoint_dir))
   else:
-    imageCNN = ImageCNN()
+    econCNN = CNN(days_past)
     sess = tf.Session()
     sess.run(tf.global_variables_initializer())
 
@@ -220,7 +219,7 @@ def cnn_traintest(data_tuple,specs={"num_epochs":5},verbose=False):
     for start, end in zip(range(0, train_count, BATCH_SIZE),range(BATCH_SIZE, train_count + 1,BATCH_SIZE)):
       sess.run("train_op",
         feed_dict={
-          "img_features:0":x_train_all[start:end],
+          "input_features:0":x_train_all[start:end],
           "data_labels:0":y_train_all[start:end],
           "training:0":True,"learning_rate:0":0.001})
 
@@ -238,7 +237,7 @@ def cnn_traintest(data_tuple,specs={"num_epochs":5},verbose=False):
           y = y_list[j]
           acc = sess.run("graph_accuracy:0",
             feed_dict={
-              "img_features:0":x,
+              "input_features:0":x,
               "data_labels:0":y,
               "training:0":False,})
           numCorrect = acc*len(x)
@@ -277,7 +276,7 @@ def cnn_traintest(data_tuple,specs={"num_epochs":5},verbose=False):
         1-float(acc_test_down)])
 
       if SAVE_ON:
-        savefile = save_dir+"imagecnn_model" + str(i)
+        savefile = save_dir+"cnn_model" + str(i)
         saver.save(sess,savefile)
         saver.export_meta_graph(savefile+".meta")
         
@@ -313,7 +312,7 @@ def cnn_traintest(data_tuple,specs={"num_epochs":5},verbose=False):
         seen_ids.append(z)
       probs = sess.run("probs:0",
         feed_dict={
-          "img_features:0":x,
+          "input_features:0":x,
           "data_labels:0":y,
           "training:0":False,})
       prob_tuple = [(z[i],int(y[i]),probs[i].tolist()) for i in range(len(probs))]
